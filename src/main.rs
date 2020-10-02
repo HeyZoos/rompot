@@ -7,9 +7,14 @@ enum Register {
     R5,
     R6,
     R7,
-    PC,
+    ProgramCounter,
     COND,
     COUNT,
+}
+
+enum MemoryMappedRegister {
+    KeyboardStatus = 0xFE00,
+    KeyboardData = 0xFE02,
 }
 
 #[derive(num_derive::FromPrimitive)]
@@ -38,20 +43,21 @@ enum Condition {
     NEG = 1 << 2,
 }
 
+type Memory = [u16; std::u16::MAX as usize];
 type RegisterMemory = [u16; Register::COUNT as usize];
 
 fn main() {
-    let mut memory: [u16; std::u16::MAX as usize] = [0; std::u16::MAX as usize];
+    let mut memory: Memory = [0; std::u16::MAX as usize];
     let mut registers: RegisterMemory = [0; Register::COUNT as usize];
 
     const PC_START: u16 = 0x3000;
 
-    registers[Register::PC as usize] = PC_START;
+    registers[Register::ProgramCounter as usize] = PC_START;
 
     println!("{:b}", -9i16);
 
     loop {
-        let instruction: u16 = memory[registers[Register::PC as usize] as usize];
+        let instruction: u16 = memory[registers[Register::ProgramCounter as usize] as usize];
         let operation = num::FromPrimitive::from_u16(instruction >> 12).unwrap();
 
         match operation {
@@ -81,7 +87,18 @@ fn op_add(instruction: u16, registers: &mut RegisterMemory) {
     update_flags(dr, registers);
 }
 
-fn op_ldi(instruction: u16, registers: &mut RegisterMemory) {}
+fn op_ldi(instruction: u16, registers: &mut RegisterMemory, memory: &mut Memory) {
+    let dr: u16 = (instruction >> 9) & 0b0000_0000_0000_0111;
+    let pc_offset: u16 = sign_extend(instruction & 0b0000_0001_1111_1111, 9);
+    registers[dr as usize] = mem_read(
+        mem_read(
+            registers[Register::ProgramCounter as usize] + pc_offset,
+            memory,
+        ),
+        memory,
+    );
+    update_flags(dr, registers);
+}
 
 /// Video explanation of the two's complement.
 ///
@@ -109,6 +126,18 @@ fn update_flags(register_index: u16, registers: &mut RegisterMemory) {
     } else {
         registers[Register::COND as usize] = Condition::POS as u16;
     }
+}
+
+fn mem_write(address: u16, value: u16, memory: &mut Memory) {
+    memory[address as usize] = value;
+}
+
+fn mem_read(address: u16, memory: &mut Memory) -> u16 {
+    if address == MemoryMappedRegister::KeyboardStatus as u16 {
+        // if ()
+    }
+
+    memory[address as usize]
 }
 
 #[cfg(test)]
