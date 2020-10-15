@@ -1,3 +1,5 @@
+use byteorder::{BigEndian, ReadBytesExt};
+
 enum Register {
     R0,
     R1,
@@ -17,7 +19,7 @@ enum MemoryMappedRegister {
     KeyboardData = 0xFE02,
 }
 
-#[derive(num_derive::FromPrimitive)]
+#[derive(Debug, num_derive::FromPrimitive)]
 enum Op {
     ADD = 0b0001,
     AND = 0b0101,
@@ -46,25 +48,52 @@ enum Condition {
 type Memory = [u16; std::u16::MAX as usize];
 type RegisterMemory = [u16; Register::COUNT as usize];
 
+///
+///
+///
+#[derive(argh::FromArgs)]
+struct Args {
+    /// input file
+    #[argh(option)]
+    file: Option<String>,
+}
+
 fn main() {
-    let mut memory: Memory = [0; std::u16::MAX as usize];
-    let mut registers: RegisterMemory = [0; Register::COUNT as usize];
+    let args: Args = argh::from_env();
+
+    if args.file.is_none() {
+        println!("You need to supply an `.lc3` --file!");
+        return;
+    }
+
+    let mut memory = [0; std::u16::MAX as usize];
+    let mut registers = [0; Register::COUNT as usize];
 
     const PC_START: u16 = 0x3000;
 
     registers[Register::ProgramCounter as usize] = PC_START;
 
-    println!("{:b}", -9i16);
+    read_image_file(args.file.unwrap(), &mut memory);
 
     let window = pancurses::initscr();
-    window.printw("Hello Rust");
-    window.refresh();
-    window.getch();
-    pancurses::endwin();
 
     loop {
-        let instruction: u16 = memory[registers[Register::ProgramCounter as usize] as usize];
-        let operation = num::FromPrimitive::from_u16(instruction >> 12).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+
+        window.clear();
+        window.printw(format!("Sleep Time (ms): {}", &sleep_time));
+
+        let pc = registers[Register::ProgramCounter as usize];
+        let instruction: u16 = memory[pc as usize];
+        let opcode = instruction >> 12;
+        let operation = num::FromPrimitive::from_u16(opcode).unwrap();
+
+        println!(
+            "PC {}, Instruction {}, Operation {:?}",
+            pc, instruction, operation
+        );
+
+        window.printw(format!("About to execute: {:b}", &opcode));
 
         match operation {
             Op::ADD => op_add(instruction, &mut registers),
@@ -84,23 +113,27 @@ fn main() {
             Op::STR => op_str(instruction, &mut registers, &mut memory),
             Op::TRAP => op_trap(instruction, &mut registers, &mut memory),
         }
+
+        registers[Register::ProgramCounter as usize] += 1;
+
+        window.refresh();
     }
 
-    let args: Vec<String> = std::env::args().collect();
+    pancurses::endwin();
 
-    println!("Hello, world!");
+    let args: Vec<String> = std::env::args().collect();
 }
 
 fn op_add(instruction: u16, registers: &mut RegisterMemory) {
-    let dr = (instruction >> 9) & 0b0000_0000_0000_0111;
-    let sr1 = (instruction >> 6) & 0b0000_0000_0000_0111;
-    let imm_flag = (instruction >> 5) & 0b0000_0000_0000_0001;
+    let dr = (instruction >> 9) & 0b111;
+    let sr1 = (instruction >> 6) & 0b111;
+    let imm_flag = (instruction >> 5) & 0b1;
 
     if imm_flag == 1 {
-        let imm5: u16 = sign_extend(instruction & 0b0000_0000_0001_1111, 5);
+        let imm5: u16 = sign_extend(instruction & 0b1_1111, 5);
         registers[dr as usize] = registers[sr1 as usize] + imm5;
     } else {
-        let sr2 = instruction & 0b0000_0000_0000_0111;
+        let sr2 = instruction & 0b111;
         registers[dr as usize] = registers[sr1 as usize] + registers[sr2 as usize];
     }
 
@@ -391,6 +424,16 @@ fn mem_read(address: u16, memory: &mut Memory) -> u16 {
     }
 
     memory[address as usize]
+}
+
+fn read_image_file(path: String, memory: &mut Memory) {
+    let mut file = std::fs::File::open(path).unwrap();
+    let mut origin = file.read_u16::<BigEndian>().unwrap();
+    while let Ok(word) = file.read_u16::<BigEndian>() {
+        memory[origin as usize] = word;
+        origin += 1;
+        dbg!(word);
+    }
 }
 
 #[cfg(test)]
