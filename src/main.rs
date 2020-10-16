@@ -1,4 +1,5 @@
 use byteorder::{BigEndian, ReadBytesExt};
+use num::FromPrimitive;
 use num_derive::FromPrimitive;
 use std::io::Read;
 
@@ -11,7 +12,7 @@ enum Register {
     _R5,
     _R6,
     R7,
-    ProgramCounter,
+    PC,
     COND,
     COUNT,
 }
@@ -81,8 +82,84 @@ struct Args {
     file: Option<String>,
 }
 
-struct Machine {
-    is_running: bool,
+struct Vm {
+    instr: u16,
+    mem: Memory,
+    on: bool,
+    regs: Registers,
+}
+
+impl Vm {
+    fn new() -> Self {
+        let mut regs = [0; Register::COUNT as usize];
+        regs[Register::PC as usize] = 0x3000;
+
+        Self {
+            instr: 0,
+            mem: [0; std::u16::MAX as usize],
+            on: true,
+            regs,
+        }
+    }
+
+    /// Loads a program located at `path` into memory.
+    fn load(&mut self, path: String) {
+        let mut file = std::fs::File::open(path).unwrap();
+        let mut origin = file.read_u16::<BigEndian>().unwrap();
+        while let Ok(word) = file.read_u16::<BigEndian>() {
+            self.mem[origin as usize] = word;
+            origin += 1;
+        }
+    }
+
+    fn pc(&self) -> u16 {
+        self.regs[Register::PC as usize]
+    }
+
+    fn opcode(&self) -> u16 {
+        self.instr >> 12
+    }
+
+    fn op(&self) -> Op {
+        FromPrimitive::from_u16(self.opcode()).unwrap()
+    }
+
+    fn step(&mut self) {
+        self.instr = self.mem[self.pc() as usize];
+
+        match self.op() {
+            Op::ADD => op_add(self.instr, &mut self.regs),
+            Op::AND => op_and(self.instr, &mut self.regs),
+            Op::BR => op_br(self.instr, &mut self.regs),
+            Op::JMP => op_jmp(self.instr, &mut self.regs),
+            Op::JSR => op_jsr(self.instr, &mut self.regs),
+            Op::LD => op_ld(self.instr, &mut self.regs, &mut self.mem),
+            Op::LDI => op_ldi(self.instr, &mut self.regs, &mut self.mem),
+            Op::LDR => op_ldr(self.instr, &mut self.regs, &mut self.mem),
+            Op::LEA => op_lea(self.instr, &mut self.regs),
+            Op::NOT => op_not(self.instr, &mut self.regs),
+            Op::RES => panic!("Reserved cannot be used."),
+            Op::RTI => op_rti(),
+            Op::ST => op_st(self.instr, &mut self.regs),
+            Op::STI => op_sti(self.instr, &mut self.regs, &mut self.mem),
+            Op::STR => op_str(self.instr, &mut self.regs, &mut self.mem),
+            Op::TRAP => {
+                let trapvect8 = self.instr & 0b1111_1111;
+                let trapcode = num::FromPrimitive::from_u16(trapvect8).unwrap();
+
+                match trapcode {
+                    Trap::GETC => trap_getc(&mut self.regs),
+                    Trap::HALT => trap_halt(self),
+                    Trap::IN => trap_in(&mut self.regs),
+                    Trap::OUT => trap_out(&mut self.regs),
+                    Trap::PUTS => trap_puts(&mut self.regs, &mut self.mem),
+                    Trap::PUTSP => trap_putsp(&mut self.regs, &mut self.mem),
+                }
+            }
+        }
+
+        self.regs[Register::PC as usize] += 1;
+    }
 }
 
 fn main() {
@@ -93,51 +170,19 @@ fn main() {
         return;
     }
 
-    let mut memory = [0; std::u16::MAX as usize];
-    let mut registers = [0; Register::COUNT as usize];
-    let mut state = Machine { is_running: true };
+    let mut vm = Vm::new();
 
-    const PC_START: u16 = 0x3000;
-
-    registers[Register::ProgramCounter as usize] = PC_START;
-
-    read_image_file(args.file.unwrap(), &mut memory);
+    vm.load(args.file.unwrap());
 
     let window = pancurses::initscr();
 
-    while state.is_running {
+    while vm.on {
         std::thread::sleep(std::time::Duration::from_millis(1000));
 
         window.clear();
         window.printw(format!("Sleep Time (ms): {}\n", 1000));
 
-        let pc = registers[Register::ProgramCounter as usize];
-        let instruction: u16 = memory[pc as usize];
-        let opcode = instruction >> 12;
-        let operation = num::FromPrimitive::from_u16(opcode).unwrap();
-
-        window.printw(format!("About to execute: {:b}", &opcode));
-
-        match operation {
-            Op::ADD => op_add(instruction, &mut registers),
-            Op::AND => op_and(instruction, &mut registers),
-            Op::BR => op_br(instruction, &mut registers),
-            Op::JMP => op_jmp(instruction, &mut registers),
-            Op::JSR => op_jsr(instruction, &mut registers),
-            Op::LD => op_ld(instruction, &mut registers, &mut memory),
-            Op::LDI => op_ldi(instruction, &mut registers, &mut memory),
-            Op::LDR => op_ldr(instruction, &mut registers, &mut memory),
-            Op::LEA => op_lea(instruction, &mut registers),
-            Op::NOT => op_not(instruction, &mut registers),
-            Op::RES => panic!("Reserved cannot be used."),
-            Op::RTI => op_rti(),
-            Op::ST => op_st(instruction, &mut registers),
-            Op::STI => op_sti(instruction, &mut registers, &mut memory),
-            Op::STR => op_str(instruction, &mut registers, &mut memory),
-            Op::TRAP => op_trap(instruction, &mut registers, &mut memory, &mut state),
-        }
-
-        registers[Register::ProgramCounter as usize] += 1;
+        vm.step();
 
         window.refresh();
     }
@@ -172,7 +217,7 @@ fn op_add(instruction: u16, registers: &mut Registers) {
 fn op_ld(instruction: u16, regs: &mut Registers, mem: &mut Memory) {
     let dr = (instruction >> 9) & 0b111;
     let pc_offset = instruction & 0b1_1111_1111;
-    let pc = regs[Register::ProgramCounter as usize];
+    let pc = regs[Register::PC as usize];
     let read_addr = pc + sign_extend(pc_offset, 9);
 
     regs[dr as usize] = mem[read_addr as usize];
@@ -190,7 +235,7 @@ fn op_ld(instruction: u16, regs: &mut Registers, mem: &mut Memory) {
 fn op_ldi(instruction: u16, regs: &mut Registers, mem: &mut Memory) {
     let dr = (instruction >> 9) & 0b111;
     let pc_offset = instruction & 0b1_1111_1111;
-    let pc = regs[Register::ProgramCounter as usize];
+    let pc = regs[Register::PC as usize];
     let read_addr = pc + sign_extend(pc_offset, 9);
 
     regs[dr as usize] = mem_read(mem_read(read_addr, mem), mem);
@@ -226,7 +271,7 @@ fn op_ldr(instruction: u16, registers: &mut Registers, mem: &mut Memory) {
 fn op_lea(instruction: u16, regs: &mut Registers) {
     let dr = (instruction >> 9) & 0b111;
     let pc_offset = instruction & 0b1_1111_1111;
-    let pc = regs[Register::ProgramCounter as usize];
+    let pc = regs[Register::PC as usize];
 
     regs[dr as usize] = pc + sign_extend(pc_offset, 9);
     update_flags(dr, regs);
@@ -255,7 +300,7 @@ fn op_not(instruction: u16, regs: &mut Registers) {
 ///     RET ; PC ← R7
 fn op_jmp(instruction: u16, regs: &mut Registers) {
     let base_r = (instruction >> 6) & 0b111;
-    regs[Register::ProgramCounter as usize] = regs[base_r as usize];
+    regs[Register::PC as usize] = regs[base_r as usize];
 }
 
 /// The condition codes specified by the state of bits [11:9] are tested. If
@@ -273,7 +318,7 @@ fn op_br(instruction: u16, regs: &mut Registers) {
     let n = (instruction >> 9 & 1) == 1;
     let z = (instruction >> 10 & 1) == 1;
     let p = (instruction >> 11 & 1) == 1;
-    let pc = regs[Register::ProgramCounter as usize];
+    let pc = regs[Register::PC as usize];
     let cond = regs[Register::COND as usize];
 
     if (n && cond == Condition::NEG as u16)
@@ -302,14 +347,13 @@ fn op_jsr(instruction: u16, regs: &mut Registers) {
 
     if bit11 == 0 {
         let base_r = (instruction >> 6) & 0b111;
-        regs[Register::ProgramCounter as usize] = regs[base_r as usize];
+        regs[Register::PC as usize] = regs[base_r as usize];
     } else {
         let pc_offset = instruction & 0b111_1111_1111;
-        regs[Register::ProgramCounter as usize] =
-            regs[Register::ProgramCounter as usize] + sign_extend(pc_offset, 11);
+        regs[Register::PC as usize] = regs[Register::PC as usize] + sign_extend(pc_offset, 11);
     }
 
-    regs[Register::R7 as usize] = regs[Register::ProgramCounter as usize];
+    regs[Register::R7 as usize] = regs[Register::PC as usize];
 }
 
 /// The contents of the register specified by SR are stored in the memory
@@ -322,7 +366,7 @@ fn op_jsr(instruction: u16, regs: &mut Registers) {
 fn op_st(instruction: u16, regs: &mut Registers) {
     let sr = (instruction >> 9) & 0b111;
     let pc_offset = instruction & 0b1_1111_1111;
-    let pc = regs[Register::ProgramCounter as usize];
+    let pc = regs[Register::PC as usize];
     regs[(pc + sign_extend(pc_offset, 9)) as usize] = regs[sr as usize];
 }
 
@@ -337,7 +381,7 @@ fn op_st(instruction: u16, regs: &mut Registers) {
 fn op_sti(instruction: u16, regs: &mut Registers, mem: &mut Memory) {
     let sr = (instruction >> 9) & 0b111;
     let pc_offset = instruction & 0b1_1111_1111;
-    let pc = regs[Register::ProgramCounter as usize];
+    let pc = regs[Register::PC as usize];
     let write_addr = pc + sign_extend(pc_offset, 9);
 
     mem[mem[write_addr as usize] as usize] = regs[sr as usize];
@@ -400,23 +444,6 @@ fn op_rti() {
     todo!()
 }
 
-///
-///
-///
-fn op_trap(instruction: u16, regs: &mut Registers, mem: &mut Memory, state: &mut Machine) {
-    let trapvect8 = instruction & 0b1111_1111;
-    let trapcode = num::FromPrimitive::from_u16(trapvect8).unwrap();
-
-    match trapcode {
-        Trap::GETC => trap_getc(regs),
-        Trap::HALT => trap_halt(state),
-        Trap::IN => trap_in(regs),
-        Trap::OUT => trap_out(regs),
-        Trap::PUTS => trap_puts(regs, mem),
-        Trap::PUTSP => trap_putsp(regs, mem),
-    }
-}
-
 fn trap_getc(regs: &mut Registers) {
     let input: Option<u16> = std::io::stdin()
         .bytes()
@@ -427,8 +454,8 @@ fn trap_getc(regs: &mut Registers) {
     regs[Register::R0 as usize] = input.unwrap();
 }
 
-fn trap_halt(state: &mut Machine) {
-    state.is_running = false;
+fn trap_halt(vm: &mut Vm) {
+    vm.on = false;
 }
 
 fn trap_in(regs: &mut Registers) {
@@ -521,15 +548,6 @@ fn mem_read(address: u16, memory: &mut Memory) -> u16 {
     }
 
     memory[address as usize]
-}
-
-fn read_image_file(path: String, memory: &mut Memory) {
-    let mut file = std::fs::File::open(path).unwrap();
-    let mut origin = file.read_u16::<BigEndian>().unwrap();
-    while let Ok(word) = file.read_u16::<BigEndian>() {
-        memory[origin as usize] = word;
-        origin += 1;
-    }
 }
 
 #[cfg(test)]
