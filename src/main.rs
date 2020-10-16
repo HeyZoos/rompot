@@ -69,7 +69,7 @@ enum Condition {
 }
 
 type Memory = [u16; std::u16::MAX as usize];
-type RegisterMemory = [u16; Register::COUNT as usize];
+type Registers = [u16; Register::COUNT as usize];
 
 ///
 ///
@@ -81,8 +81,8 @@ struct Args {
     file: Option<String>,
 }
 
-struct State {
-    running: bool,
+struct Machine {
+    is_running: bool,
 }
 
 fn main() {
@@ -93,9 +93,9 @@ fn main() {
         return;
     }
 
-    let mut state = State { running: true };
     let mut memory = [0; std::u16::MAX as usize];
     let mut registers = [0; Register::COUNT as usize];
+    let mut state = Machine { is_running: true };
 
     const PC_START: u16 = 0x3000;
 
@@ -105,21 +105,16 @@ fn main() {
 
     let window = pancurses::initscr();
 
-    while state.running {
+    while state.is_running {
         std::thread::sleep(std::time::Duration::from_millis(1000));
 
         window.clear();
-        window.printw(format!("Sleep Time (ms): {}", 1000));
+        window.printw(format!("Sleep Time (ms): {}\n", 1000));
 
         let pc = registers[Register::ProgramCounter as usize];
         let instruction: u16 = memory[pc as usize];
         let opcode = instruction >> 12;
         let operation = num::FromPrimitive::from_u16(opcode).unwrap();
-
-        println!(
-            "PC {}, Instruction {}, Operation {:?}",
-            pc, instruction, operation
-        );
 
         window.printw(format!("About to execute: {:b}", &opcode));
 
@@ -148,11 +143,9 @@ fn main() {
     }
 
     pancurses::endwin();
-
-    let args: Vec<String> = std::env::args().collect();
 }
 
-fn op_add(instruction: u16, registers: &mut RegisterMemory) {
+fn op_add(instruction: u16, registers: &mut Registers) {
     let dr = (instruction >> 9) & 0b111;
     let sr1 = (instruction >> 6) & 0b111;
     let imm_flag = (instruction >> 5) & 0b1;
@@ -176,7 +169,7 @@ fn op_add(instruction: u16, registers: &mut RegisterMemory) {
 /// ## Example
 ///
 /// LD R4, VALUE ; R4 ← mem[VALUE]
-fn op_ld(instruction: u16, regs: &mut RegisterMemory, mem: &mut Memory) {
+fn op_ld(instruction: u16, regs: &mut Registers, mem: &mut Memory) {
     let dr = (instruction >> 9) & 0b111;
     let pc_offset = instruction & 0b1_1111_1111;
     let pc = regs[Register::ProgramCounter as usize];
@@ -194,7 +187,7 @@ fn op_ld(instruction: u16, regs: &mut RegisterMemory, mem: &mut Memory) {
 /// ## Example
 ///
 /// LDI R4, ONEMORE ; R4 ← mem[mem[ONEMORE]]
-fn op_ldi(instruction: u16, regs: &mut RegisterMemory, mem: &mut Memory) {
+fn op_ldi(instruction: u16, regs: &mut Registers, mem: &mut Memory) {
     let dr = (instruction >> 9) & 0b111;
     let pc_offset = instruction & 0b1_1111_1111;
     let pc = regs[Register::ProgramCounter as usize];
@@ -212,7 +205,7 @@ fn op_ldi(instruction: u16, regs: &mut RegisterMemory, mem: &mut Memory) {
 /// ## Example
 ///
 /// LDR R4, R2, #−5 ; R4 ← mem[R2 − 5]
-fn op_ldr(instruction: u16, registers: &mut RegisterMemory, mem: &mut Memory) {
+fn op_ldr(instruction: u16, registers: &mut Registers, mem: &mut Memory) {
     let dr = (instruction >> 9) & 0b111;
     let base_r = (instruction >> 6) & 0b111;
     let pc_offset = instruction & 0b11_1111;
@@ -230,7 +223,7 @@ fn op_ldr(instruction: u16, registers: &mut RegisterMemory, mem: &mut Memory) {
 /// ## Example
 ///
 ///     LEA R4, TARGET ; R4 ← address of TARGET.
-fn op_lea(instruction: u16, regs: &mut RegisterMemory) {
+fn op_lea(instruction: u16, regs: &mut Registers) {
     let dr = (instruction >> 9) & 0b111;
     let pc_offset = instruction & 0b1_1111_1111;
     let pc = regs[Register::ProgramCounter as usize];
@@ -242,7 +235,7 @@ fn op_lea(instruction: u16, regs: &mut RegisterMemory) {
 /// The bit-wise complement of the contents of SR is stored in DR. The
 /// condition codes are set, based on whether the binary value produced, taken
 /// as a 2’s complement integer, is negative, zero, or positive.
-fn op_not(instruction: u16, regs: &mut RegisterMemory) {
+fn op_not(instruction: u16, regs: &mut Registers) {
     let dr = (instruction >> 9) & 0b111;
     let sr = (instruction >> 6) & 0b111;
     regs[dr as usize] = sr.wrapping_neg(); // <3
@@ -260,7 +253,7 @@ fn op_not(instruction: u16, regs: &mut RegisterMemory) {
 ///
 ///     JMP R2 ; PC ← R2
 ///     RET ; PC ← R7
-fn op_jmp(instruction: u16, regs: &mut RegisterMemory) {
+fn op_jmp(instruction: u16, regs: &mut Registers) {
     let base_r = (instruction >> 6) & 0b111;
     regs[Register::ProgramCounter as usize] = regs[base_r as usize];
 }
@@ -275,7 +268,7 @@ fn op_jmp(instruction: u16, regs: &mut RegisterMemory) {
 ///
 ///     BRzp LOOP ; Branch to LOOP if the last result was zero or positive.
 ///     BR NEXT ; Unconditionally branch to NEXT.
-fn op_br(instruction: u16, regs: &mut RegisterMemory) {
+fn op_br(instruction: u16, regs: &mut Registers) {
     let pc_offset = instruction & 0b1_1111_1111;
     let n = (instruction >> 9 & 1) == 1;
     let z = (instruction >> 10 & 1) == 1;
@@ -304,7 +297,7 @@ fn op_br(instruction: u16, regs: &mut RegisterMemory) {
 ///               ; Jump to QUEUE.
 ///     JSRR R3 ; Put the address following JSRR into R7; Jump to the
 ///             ; address contained in R3.
-fn op_jsr(instruction: u16, regs: &mut RegisterMemory) {
+fn op_jsr(instruction: u16, regs: &mut Registers) {
     let bit11 = (instruction >> 11) & 0b1;
 
     if bit11 == 0 {
@@ -326,7 +319,7 @@ fn op_jsr(instruction: u16, regs: &mut RegisterMemory) {
 /// ## Example
 ///
 /// ST R4, HERE ; mem[HERE] ← R4
-fn op_st(instruction: u16, regs: &mut RegisterMemory) {
+fn op_st(instruction: u16, regs: &mut Registers) {
     let sr = (instruction >> 9) & 0b111;
     let pc_offset = instruction & 0b1_1111_1111;
     let pc = regs[Register::ProgramCounter as usize];
@@ -341,7 +334,7 @@ fn op_st(instruction: u16, regs: &mut RegisterMemory) {
 /// ## Example
 ///
 ///     STI R4, NOT_HERE ; mem[mem[NOT_HERE]] ← R4
-fn op_sti(instruction: u16, regs: &mut RegisterMemory, mem: &mut Memory) {
+fn op_sti(instruction: u16, regs: &mut Registers, mem: &mut Memory) {
     let sr = (instruction >> 9) & 0b111;
     let pc_offset = instruction & 0b1_1111_1111;
     let pc = regs[Register::ProgramCounter as usize];
@@ -358,7 +351,7 @@ fn op_sti(instruction: u16, regs: &mut RegisterMemory, mem: &mut Memory) {
 /// ## Example
 ///
 ///     STR R4, R2, #5 ; mem[R2 + 5] ← R4
-fn op_str(instruction: u16, regs: &mut RegisterMemory, mem: &mut Memory) {
+fn op_str(instruction: u16, regs: &mut Registers, mem: &mut Memory) {
     let sr = (instruction >> 9) & 0b111;
     let base_r = (instruction >> 6) & 0b111;
     let pc_offset = instruction & 0b11_1111;
@@ -380,7 +373,7 @@ fn op_str(instruction: u16, regs: &mut RegisterMemory, mem: &mut Memory) {
 /// AND R2, R3, R4 ;R2 ← R3 AND R4
 /// AND R2, R3, #7 ;R2 ← R3 AND 7
 /// ```
-fn op_and(instruction: u16, regs: &mut RegisterMemory) {
+fn op_and(instruction: u16, regs: &mut Registers) {
     let dr = (instruction >> 9) & 0b111;
     let bit5 = instruction >> 5 & 0b1;
     let sr1 = (instruction >> 6) & 0b111;
@@ -403,14 +396,14 @@ fn op_and(instruction: u16, regs: &mut RegisterMemory) {
 ///
 ///
 ///
-fn op_rti(instruction: u16, regs: &mut RegisterMemory) {
+fn op_rti(instruction: u16, regs: &mut Registers) {
     todo!()
 }
 
 ///
 ///
 ///
-fn op_trap(instruction: u16, regs: &mut RegisterMemory, mem: &mut Memory, state: &mut State) {
+fn op_trap(instruction: u16, regs: &mut Registers, mem: &mut Memory, state: &mut Machine) {
     let trapvect8 = instruction & 0b1111_1111;
     let trapcode = num::FromPrimitive::from_u16(trapvect8).unwrap();
 
@@ -424,7 +417,7 @@ fn op_trap(instruction: u16, regs: &mut RegisterMemory, mem: &mut Memory, state:
     }
 }
 
-fn trap_getc(regs: &mut RegisterMemory) {
+fn trap_getc(regs: &mut Registers) {
     let input: Option<u16> = std::io::stdin()
         .bytes()
         .next()
@@ -434,11 +427,11 @@ fn trap_getc(regs: &mut RegisterMemory) {
     regs[Register::R0 as usize] = input.unwrap();
 }
 
-fn trap_halt(state: &mut State) {
-    state.running = false;
+fn trap_halt(state: &mut Machine) {
+    state.is_running = false;
 }
 
-fn trap_in(regs: &mut RegisterMemory) {
+fn trap_in(regs: &mut Registers) {
     print!("Enter a character: ");
 
     let input = std::io::stdin()
@@ -453,11 +446,11 @@ fn trap_in(regs: &mut RegisterMemory) {
     regs[Register::R0 as usize] = input;
 }
 
-fn trap_out(regs: &mut RegisterMemory) {
+fn trap_out(regs: &mut Registers) {
     print!("{}", regs[Register::R0 as usize] as u8 as char);
 }
 
-fn trap_puts(regs: &mut RegisterMemory, mem: &mut Memory) {
+fn trap_puts(regs: &mut Registers, mem: &mut Memory) {
     let mut pointer = regs[Register::R0 as usize];
 
     loop {
@@ -473,7 +466,7 @@ fn trap_puts(regs: &mut RegisterMemory, mem: &mut Memory) {
     }
 }
 
-fn trap_putsp(regs: &mut RegisterMemory, mem: &mut Memory) {
+fn trap_putsp(regs: &mut Registers, mem: &mut Memory) {
     let mut pointer = regs[Register::R0 as usize];
 
     loop {
@@ -512,7 +505,7 @@ fn sign_extend(n: u16, bit_count: usize) -> u16 {
     }
 }
 
-fn update_flags(register_index: u16, registers: &mut RegisterMemory) {
+fn update_flags(register_index: u16, registers: &mut Registers) {
     if registers[register_index as usize] == 0 {
         registers[Register::COND as usize] = Condition::ZRO as u16;
     } else if registers[register_index as usize] >> 15 == 1 {
@@ -540,7 +533,6 @@ fn read_image_file(path: String, memory: &mut Memory) {
     while let Ok(word) = file.read_u16::<BigEndian>() {
         memory[origin as usize] = word;
         origin += 1;
-        dbg!(word);
     }
 }
 
