@@ -4,12 +4,12 @@ use std::io::Read;
 
 enum Register {
     R0,
-    R1,
-    R2,
-    R3,
-    R4,
-    R5,
-    R6,
+    _R1,
+    _R2,
+    _R3,
+    _R4,
+    _R5,
+    _R6,
     R7,
     ProgramCounter,
     COND,
@@ -18,7 +18,7 @@ enum Register {
 
 enum MemoryMappedRegister {
     KeyboardStatus = 0xFE00,
-    KeyboardData = 0xFE02,
+    _KeyboardData = 0xFE02,
 }
 
 #[derive(Debug, FromPrimitive)]
@@ -130,7 +130,7 @@ fn main() {
             Op::LEA => op_lea(instruction, &mut registers),
             Op::NOT => op_not(instruction, &mut registers),
             Op::RES => panic!("Reserved cannot be used."),
-            Op::RTI => op_rti(instruction, &mut registers),
+            Op::RTI => op_rti(),
             Op::ST => op_st(instruction, &mut registers),
             Op::STI => op_sti(instruction, &mut registers, &mut memory),
             Op::STR => op_str(instruction, &mut registers, &mut memory),
@@ -396,7 +396,7 @@ fn op_and(instruction: u16, regs: &mut Registers) {
 ///
 ///
 ///
-fn op_rti(instruction: u16, regs: &mut Registers) {
+fn op_rti() {
     todo!()
 }
 
@@ -513,10 +513,6 @@ fn update_flags(register_index: u16, registers: &mut Registers) {
     } else {
         registers[Register::COND as usize] = Condition::POS as u16;
     }
-}
-
-fn mem_write(address: u16, value: u16, memory: &mut Memory) {
-    memory[address as usize] = value;
 }
 
 fn mem_read(address: u16, memory: &mut Memory) -> u16 {
