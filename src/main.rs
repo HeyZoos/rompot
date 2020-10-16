@@ -1,4 +1,6 @@
 use byteorder::{BigEndian, ReadBytesExt};
+use num_derive::FromPrimitive;
+use std::io::Read;
 
 enum Register {
     R0,
@@ -19,7 +21,7 @@ enum MemoryMappedRegister {
     KeyboardData = 0xFE02,
 }
 
-#[derive(Debug, num_derive::FromPrimitive)]
+#[derive(Debug, FromPrimitive)]
 enum Op {
     ADD = 0b0001,
     AND = 0b0101,
@@ -37,6 +39,27 @@ enum Op {
     STI = 0b1011,
     STR = 0b0111,
     TRAP = 0b1111,
+}
+
+#[derive(Debug, FromPrimitive)]
+enum Trap {
+    /// Get character from keyboard, not echoed onto the terminal.
+    GETC = 0x20,
+
+    /// Output a character.
+    OUT = 0x21,
+
+    /// Output a word string.
+    PUTS = 0x22,
+
+    /// Get character from keyboard, echoed onto the terminal.
+    IN = 0x23,
+
+    /// Output a byte string.
+    PUTSP = 0x24,
+
+    /// Halt the program.
+    HALT = 0x25,
 }
 
 enum Condition {
@@ -58,6 +81,10 @@ struct Args {
     file: Option<String>,
 }
 
+struct State {
+    running: bool,
+}
+
 fn main() {
     let args: Args = argh::from_env();
 
@@ -66,6 +93,7 @@ fn main() {
         return;
     }
 
+    let mut state = State { running: true };
     let mut memory = [0; std::u16::MAX as usize];
     let mut registers = [0; Register::COUNT as usize];
 
@@ -77,11 +105,11 @@ fn main() {
 
     let window = pancurses::initscr();
 
-    loop {
+    while state.running {
         std::thread::sleep(std::time::Duration::from_millis(1000));
 
         window.clear();
-        window.printw(format!("Sleep Time (ms): {}", &sleep_time));
+        window.printw(format!("Sleep Time (ms): {}", 1000));
 
         let pc = registers[Register::ProgramCounter as usize];
         let instruction: u16 = memory[pc as usize];
@@ -111,7 +139,7 @@ fn main() {
             Op::ST => op_st(instruction, &mut registers),
             Op::STI => op_sti(instruction, &mut registers, &mut memory),
             Op::STR => op_str(instruction, &mut registers, &mut memory),
-            Op::TRAP => op_trap(instruction, &mut registers, &mut memory),
+            Op::TRAP => op_trap(instruction, &mut registers, &mut memory, &mut state),
         }
 
         registers[Register::ProgramCounter as usize] += 1;
@@ -382,8 +410,88 @@ fn op_rti(instruction: u16, regs: &mut RegisterMemory) {
 ///
 ///
 ///
-fn op_trap(instruction: u16, regs: &mut RegisterMemory, mem: &mut Memory) {
-    todo!()
+fn op_trap(instruction: u16, regs: &mut RegisterMemory, mem: &mut Memory, state: &mut State) {
+    let trapvect8 = instruction & 0b1111_1111;
+    let trapcode = num::FromPrimitive::from_u16(trapvect8).unwrap();
+
+    match trapcode {
+        Trap::GETC => trap_getc(regs),
+        Trap::HALT => trap_halt(state),
+        Trap::IN => trap_in(regs),
+        Trap::OUT => trap_out(regs),
+        Trap::PUTS => trap_puts(regs, mem),
+        Trap::PUTSP => trap_putsp(regs, mem),
+    }
+}
+
+fn trap_getc(regs: &mut RegisterMemory) {
+    let input: Option<u16> = std::io::stdin()
+        .bytes()
+        .next()
+        .and_then(|result| result.ok())
+        .map(|byte| byte as u16);
+
+    regs[Register::R0 as usize] = input.unwrap();
+}
+
+fn trap_halt(state: &mut State) {
+    state.running = false;
+}
+
+fn trap_in(regs: &mut RegisterMemory) {
+    print!("Enter a character: ");
+
+    let input = std::io::stdin()
+        .bytes()
+        .next()
+        .and_then(|result| result.ok())
+        .map(|byte| byte as u16)
+        .unwrap();
+
+    print!("{}", input as u8 as char);
+
+    regs[Register::R0 as usize] = input;
+}
+
+fn trap_out(regs: &mut RegisterMemory) {
+    print!("{}", regs[Register::R0 as usize] as u8 as char);
+}
+
+fn trap_puts(regs: &mut RegisterMemory, mem: &mut Memory) {
+    let mut pointer = regs[Register::R0 as usize];
+
+    loop {
+        let word = vec![mem[pointer as usize]];
+
+        if word[0] == 0 {
+            break;
+        }
+
+        let ch: Vec<char> = std::char::decode_utf16(word).map(|r| r.unwrap()).collect();
+        print!("{}", ch[0]);
+        pointer += 1;
+    }
+}
+
+fn trap_putsp(regs: &mut RegisterMemory, mem: &mut Memory) {
+    let mut pointer = regs[Register::R0 as usize];
+
+    loop {
+        let word = mem[pointer as usize];
+
+        if word == 0 {
+            break;
+        }
+
+        let char1 = (word & 0xFF) as u8;
+        print!("{}", char1 as char);
+        let char2 = (word >> 8) as u8;
+        if char2 != 0 {
+            print!("{}", char2 as char);
+        }
+
+        pointer += 1;
+    }
 }
 
 /// Video explanation of the two's complement.
