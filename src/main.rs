@@ -1,29 +1,34 @@
+mod types;
+
+use crate::types::StatefulList;
+
 use argh::FromArgs;
+
 use byteorder::{BigEndian, ReadBytesExt};
+
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
+
 use std::io;
 use std::io::Read;
-use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tui::backend::CrosstermBackend;
-use tui::Terminal;
-use tui::{
-    backend::Backend,
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    symbols,
-    text::{Span, Spans},
-    widgets::canvas::{Canvas, Line, Map, MapResolution, Rectangle},
-    widgets::{
-        Axis, BarChart, Block, Borders, Chart, Dataset, Gauge, List, ListItem, ListState,
-        Paragraph, Row, Sparkline, Table, Tabs, Wrap,
-    },
-    Frame,
-};
 
-enum Event<I> {
+use tui::backend::CrosstermBackend;
+use tui::layout::{Constraint, Direction, Layout};
+use tui::style::{Modifier, Style};
+use tui::text::{Span, Spans};
+use tui::widgets::{Block, Borders, List, ListItem, ListState};
+use tui::Terminal;
+
+/**
+ * TODO(jesse)
+ *
+ * [ ] - Investigate how to get rid of the copious amount of `as` casts.
+ * [ ] - Get test coverage to 100.
+ */
+
+enum _Event<I> {
     Input(I),
     Tick,
 }
@@ -117,6 +122,7 @@ struct Vm {
     mem: Memory,
     on: bool,
     regs: Registers,
+    instruction_history: StatefulList<String>,
 }
 
 impl Vm {
@@ -129,6 +135,7 @@ impl Vm {
             mem: [0; std::u16::MAX as usize],
             on: true,
             regs,
+            instruction_history: StatefulList::new(),
         }
     }
 
@@ -188,6 +195,9 @@ impl Vm {
             }
         }
 
+        self.instruction_history
+            .items
+            .push_front(format!("{}", self.instr));
         self.regs[Register::PC as usize] += 1;
     }
 }
@@ -214,10 +224,10 @@ fn main() -> Result<(), io::Error> {
 
     let tick_rate = Duration::from_millis(1000);
     thread::spawn(move || {
-        let mut last_tick = Instant::now();
+        let last_tick = Instant::now();
         loop {
             // poll for tick rate duration, if no events, sent tick event.
-            let timeout = tick_rate
+            let _timeout = tick_rate
                 .checked_sub(last_tick.elapsed())
                 .unwrap_or_else(|| Duration::from_secs(0));
 
@@ -241,7 +251,7 @@ fn main() -> Result<(), io::Error> {
         terminal.clear().unwrap();
 
         let mut instruction = format!("{}", vm.instr);
-        let instruction_clone = instruction.clone();
+        let _instruction_clone = instruction.clone();
 
         terminal
             .draw(|f| {
@@ -258,12 +268,14 @@ fn main() -> Result<(), io::Error> {
                     )
                     .split(f.size());
 
-                let tasks: Vec<ListItem> = state
+                let tasks: Vec<ListItem> = vm
+                    .instruction_history
+                    .items
                     .iter()
-                    .map(|i| ListItem::new(vec![Spans::from(Span::raw(String::clone(i)))]))
+                    .map(|i| ListItem::new(vec![Spans::from(Span::raw(i))]))
                     .collect();
                 let tasks = List::new(tasks)
-                    .block(Block::default().borders(Borders::ALL).title("List"))
+                    .block(Block::default().borders(Borders::ALL).title("Instructions"))
                     .highlight_style(Style::default().add_modifier(Modifier::BOLD))
                     .highlight_symbol("> ");
                 f.render_stateful_widget(tasks, chunks[0], &mut list_state);
