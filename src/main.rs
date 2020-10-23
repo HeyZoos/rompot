@@ -1,7 +1,32 @@
+use argh::FromArgs;
 use byteorder::{BigEndian, ReadBytesExt};
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
+use std::io;
 use std::io::Read;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
+use tui::backend::CrosstermBackend;
+use tui::Terminal;
+use tui::{
+    backend::Backend,
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    symbols,
+    text::{Span, Spans},
+    widgets::canvas::{Canvas, Line, Map, MapResolution, Rectangle},
+    widgets::{
+        Axis, BarChart, Block, Borders, Chart, Dataset, Gauge, List, ListItem, ListState,
+        Paragraph, Row, Sparkline, Table, Tabs, Wrap,
+    },
+    Frame,
+};
+
+enum Event<I> {
+    Input(I),
+    Tick,
+}
 
 enum Register {
     R0,
@@ -72,14 +97,19 @@ enum Condition {
 type Memory = [u16; std::u16::MAX as usize];
 type Registers = [u16; Register::COUNT as usize];
 
-///
-///
-///
-#[derive(argh::FromArgs)]
-struct Args {
-    /// input file
+/// Crossterm demo
+#[derive(Debug, FromArgs)]
+struct Cli {
+    /// butts
     #[argh(option)]
     file: Option<String>,
+
+    /// time in ms between two ticks.
+    #[argh(option, default = "250")]
+    tick_rate: u64,
+    /// whether unicode symbols are used to improve the overall look of the app
+    #[argh(option, default = "true")]
+    enhanced_graphics: bool,
 }
 
 struct Vm {
@@ -162,32 +192,99 @@ impl Vm {
     }
 }
 
-fn main() {
-    let args: Args = argh::from_env();
+fn main() -> Result<(), io::Error> {
+    let args: Cli = argh::from_env();
 
     if args.file.is_none() {
         println!("You need to supply an `.lc3` --file!");
-        return;
+        return Ok(());
     }
 
     let mut vm = Vm::new();
 
     vm.load(args.file.unwrap());
 
-    let window = pancurses::initscr();
+    let stdout = io::stdout();
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // let mut app = App::new("Crossterm Demo", cli.enhanced_graphics);
+
+    // let (tx, rx) = modifiex::channel();
+
+    let tick_rate = Duration::from_millis(1000);
+    thread::spawn(move || {
+        let mut last_tick = Instant::now();
+        loop {
+            // poll for tick rate duration, if no events, sent tick event.
+            let timeout = tick_rate
+                .checked_sub(last_tick.elapsed())
+                .unwrap_or_else(|| Duration::from_secs(0));
+
+            // if event::poll(timeout).unwrap() {
+            // if let CEvent::Key(key) = event::read().unwrap() {
+            //     tx.send(Event::Input(key)).unwrap();
+            // }
+            // }
+
+            // if last_tick.elapsed() >= tick_rate {
+            //     tx.send(Event::Tick).unwrap();
+            //     last_tick = Instant::now();
+            // }
+        }
+    });
+
+    let mut state: Vec<String> = vec![];
+    let mut list_state = ListState::default();
 
     while vm.on {
+        terminal.clear().unwrap();
+
+        let mut instruction = format!("{}", vm.instr);
+        let instruction_clone = instruction.clone();
+
+        terminal
+            .draw(|f| {
+                let chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .margin(1)
+                    .constraints(
+                        [
+                            Constraint::Percentage(25),
+                            Constraint::Percentage(50),
+                            Constraint::Percentage(25),
+                        ]
+                        .as_ref(),
+                    )
+                    .split(f.size());
+
+                let tasks: Vec<ListItem> = state
+                    .iter()
+                    .map(|i| ListItem::new(vec![Spans::from(Span::raw(String::clone(i)))]))
+                    .collect();
+                let tasks = List::new(tasks)
+                    .block(Block::default().borders(Borders::ALL).title("List"))
+                    .highlight_style(Style::default().add_modifier(Modifier::BOLD))
+                    .highlight_symbol("> ");
+                f.render_stateful_widget(tasks, chunks[0], &mut list_state);
+
+                // let block = Block::default().title("Instructions").borders(Borders::ALL);
+                // f.render_widget(block, chunks[0]);
+                let block = Block::default().title("Memory").borders(Borders::ALL);
+                f.render_widget(block, chunks[1]);
+                let block = Block::default().title("Registers").borders(Borders::ALL);
+                f.render_widget(block, chunks[2]);
+            })
+            .unwrap();
+
         std::thread::sleep(std::time::Duration::from_millis(1000));
 
-        window.clear();
-        window.printw(format!("Sleep Time (ms): {}\n", 1000));
-
         vm.step();
-
-        window.refresh();
+        instruction = format!("{}", vm.instr);
+        state.push(instruction);
     }
 
-    pancurses::endwin();
+    Ok(())
 }
 
 fn op_add(instruction: u16, registers: &mut Registers) {
