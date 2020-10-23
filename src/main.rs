@@ -16,9 +16,9 @@ use std::time::{Duration, Instant};
 
 use tui::backend::CrosstermBackend;
 use tui::layout::{Constraint, Direction, Layout};
-use tui::style::{Modifier, Style};
+use tui::style::{Modifier, Style, Color};
 use tui::text::{Span, Spans};
-use tui::widgets::{Block, Borders, List, ListItem, ListState};
+use tui::widgets::{Block, Borders, List, ListItem, ListState, Table, Row};
 use tui::Terminal;
 
 /**
@@ -284,8 +284,23 @@ fn main() -> Result<(), io::Error> {
                 // f.render_widget(block, chunks[0]);
                 let block = Block::default().title("Memory").borders(Borders::ALL);
                 f.render_widget(block, chunks[1]);
-                let block = Block::default().title("Registers").borders(Borders::ALL);
-                f.render_widget(block, chunks[2]);
+                // let block = Block::default().title("Registers").borders(Borders::ALL);
+                // f.render_widget(block, chunks[2]);
+                
+                let row_style = Style::default().fg(Color::White);
+                let rows = vm.regs.iter().enumerate().map(|(idx, reg)| {
+                    let hex_val = format!("0x{:0>4x}", reg);
+                    let idx_s = format!("Register {}", idx);
+                    Row::Data(vec![idx_s, hex_val].into_iter())
+                });
+                let t = Table::new(["Register Name", "Value"].into_iter(), rows)
+                .block(Block::default().borders(Borders::ALL).title("Table"))
+                .highlight_symbol(">> ")
+                .widths(&[
+                    Constraint::Percentage(50),
+                    Constraint::Percentage(50)
+                ]);
+                f.render_widget(t, chunks[2]);
             })
             .unwrap();
 
