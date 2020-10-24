@@ -206,7 +206,7 @@ fn main() -> Result<(), io::Error> {
     let args: Cli = argh::from_env();
 
     if args.file.is_none() {
-        println!("You need to supply an `.lc3` --file!");
+        println!("You need to supply an `.obj` --file!");
         return Ok(());
     }
 
