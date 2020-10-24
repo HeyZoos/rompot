@@ -293,12 +293,13 @@ fn main() -> Result<(), io::Error> {
                     let idx_s = format!("Register {}", idx);
                     Row::Data(vec![idx_s, hex_val].into_iter())
                 });
+
+                let register_table_widget = Table::new(["Name", "Value"].iter(), rows)
                     .block(Block::default().borders(Borders::ALL).title("Registers"))
-                .widths(&[
-                    Constraint::Percentage(50),
-                    Constraint::Percentage(50)
-                ]);
-                f.render_widget(t, chunks[2]);
+                    .highlight_symbol(">> ")
+                    .widths(&[Constraint::Percentage(50), Constraint::Percentage(50)]);
+
+                frame.render_widget(register_table_widget, sections[2]);
             })
             .unwrap();
 
