@@ -254,8 +254,8 @@ fn main() -> Result<(), io::Error> {
         let _instruction_clone = instruction.clone();
 
         terminal
-            .draw(|f| {
-                let chunks = Layout::default()
+            .draw(|frame| {
+                let sections = Layout::default()
                     .direction(Direction::Horizontal)
                     .margin(1)
                     .constraints(
@@ -266,7 +266,7 @@ fn main() -> Result<(), io::Error> {
                         ]
                         .as_ref(),
                     )
-                    .split(f.size());
+                    .split(frame.size());
 
                 let tasks: Vec<ListItem> = vm
                     .instruction_history
@@ -274,20 +274,17 @@ fn main() -> Result<(), io::Error> {
                     .iter()
                     .map(|i| ListItem::new(vec![Spans::from(Span::raw(i))]))
                     .collect();
-                let tasks = List::new(tasks)
+
+                let instruction_list_widget = List::new(tasks)
                     .block(Block::default().borders(Borders::ALL).title("Instructions"))
                     .highlight_style(Style::default().add_modifier(Modifier::BOLD))
                     .highlight_symbol("> ");
-                f.render_stateful_widget(tasks, chunks[0], &mut list_state);
 
-                // let block = Block::default().title("Instructions").borders(Borders::ALL);
-                // f.render_widget(block, chunks[0]);
+                frame.render_stateful_widget(instruction_list_widget, sections[0], &mut list_state);
+
                 let block = Block::default().title("Memory").borders(Borders::ALL);
-                f.render_widget(block, chunks[1]);
-                // let block = Block::default().title("Registers").borders(Borders::ALL);
-                // f.render_widget(block, chunks[2]);
-                
-                let row_style = Style::default().fg(Color::White);
+                frame.render_widget(block, sections[1]);
+
                 let rows = vm.regs.iter().enumerate().map(|(idx, reg)| {
                     let hex_val = format!("0x{:0>4x}", reg);
                     let idx_s = format!("Register {}", idx);
