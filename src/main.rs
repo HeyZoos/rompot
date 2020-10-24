@@ -293,9 +293,7 @@ fn main() -> Result<(), io::Error> {
                     let idx_s = format!("Register {}", idx);
                     Row::Data(vec![idx_s, hex_val].into_iter())
                 });
-                let t = Table::new(["Register Name", "Value"].into_iter(), rows)
-                .block(Block::default().borders(Borders::ALL).title("Table"))
-                .highlight_symbol(">> ")
+                    .block(Block::default().borders(Borders::ALL).title("Registers"))
                 .widths(&[
                     Constraint::Percentage(50),
                     Constraint::Percentage(50)
