@@ -16,9 +16,9 @@ use std::time::{Duration, Instant};
 
 use tui::backend::CrosstermBackend;
 use tui::layout::{Constraint, Direction, Layout};
-use tui::style::{Modifier, Style, Color};
+use tui::style::{Modifier, Style};
 use tui::text::{Span, Spans};
-use tui::widgets::{Block, Borders, List, ListItem, ListState, Table, Row};
+use tui::widgets::{Block, Borders, List, ListItem, ListState, Row, Table};
 use tui::Terminal;
 
 /**
